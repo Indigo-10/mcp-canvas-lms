@@ -1,62 +1,27 @@
-# Canvas MCP Server v2.3.0
+# Canvas MCP Server
 
-> A comprehensive Model Context Protocol (MCP) server for Canvas LMS with complete student, instructor, and account administration functionality
+A [Model Context Protocol](https://modelcontextprotocol.io) server that connects AI assistants to Canvas LMS. Goes beyond listing files and assignments — it can **read your slides, PDFs, and course pages** so the AI can actually reason over your course content.
 
-## 🚀 What's New in v2.3.0
+## What it does
 
-- **🌐 NEW**: Streamable HTTP transport support (`MCP_TRANSPORT=streamable-http`)
-- **🖥️ Preserved**: First-class stdio transport for local MCP clients
-- **🧪 Added**: Behavior tests for lifecycle, transports, and structured failure-path errors
-- **🧱 Improved**: Stricter tool schemas and codemode-oriented tool descriptions
-- **🔧 FIXED**: Course creation "page not found" error (missing `account_id` parameter)
-- **👨‍💼 Account Management**: Complete account-level administration tools
-- **📊 Reports & Analytics**: Generate and access Canvas account reports  
-- **👥 User Management**: Create and manage users at the account level
-- **🏢 Multi-Account Support**: Handle account hierarchies and sub-accounts
-- **✅ API Compliance**: All endpoints now follow proper Canvas API patterns
+- **Read course content** — extracts text from PDFs, PPTX, DOCX, HTML files, and Canvas pages
+- **Bulk course dump** — walks all modules and pulls text from every file and page in one call
+- **Search** — keyword search across files, pages, assignments, and discussions
+- **Course timeline** — chronological map of every module, item, and due date (enables "everything before midterms" queries)
+- **Full Canvas API** — 50+ tools covering courses, assignments, grades, submissions, quizzes, discussions, calendar, conversations, and admin
 
-## 🎯 Key Features
+## Quick start
 
-### 🎓 For Students
-- **Course Management**: Access all courses, syllabi, and course materials
-- **Assignment Workflow**: View, submit (text/URL/files), and track assignments
-- **Communication**: Participate in discussions, read announcements, send messages
-- **Progress Tracking**: Monitor grades, module completion, and calendar events
-- **Quizzes**: Take quizzes, view results and feedback
-- **File Access**: Browse and download course files and resources
+### Claude Desktop
 
-### 👨‍🏫 For Instructors
-- **Course Creation**: Create and manage course structure *(now with proper account support)*
-- **Grading**: Grade submissions, provide feedback, manage rubrics
-- **User Management**: Enroll students, manage permissions
-- **Content Management**: Create assignments, quizzes, discussions
-
-### 👨‍💼 For Account Administrators (NEW!)
-- **Account Management**: Manage institutional Canvas accounts
-- **User Administration**: Create and manage users across accounts
-- **Course Oversight**: List and manage all courses within accounts
-- **Reporting**: Generate enrollment, grade, and activity reports
-- **Sub-Account Management**: Handle account hierarchies and structures
-
-### 🛠️ Technical Excellence
-- **Robust API**: Automatic retries, pagination, comprehensive error handling
-- **Cloud Ready**: Docker containers, Kubernetes manifests, health checks
-- **Well Tested**: Unit tests, integration tests, mocking, coverage reports
-- **Type Safe**: Full TypeScript implementation with strict types
-- **50+ Tools**: Comprehensive coverage of Canvas LMS functionality
-
-## Quick Start
-
-### Option 1: Claude Desktop Integration (Recommended MCP Setup)
-
-Add to `claude_desktop_config.json`:
+Add to your `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "canvas-mcp-server": {
-      "command": "npx",
-      "args": ["-y", "canvas-mcp-server"],
+    "canvas": {
+      "command": "node",
+      "args": ["/path/to/mcp-canvas-lms/build/index.js"],
       "env": {
         "CANVAS_API_TOKEN": "your_token_here",
         "CANVAS_DOMAIN": "your_school.instructure.com"
@@ -66,406 +31,215 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-### Option 2: NPM Package
+### From npm
 
 ```bash
-# Install globally
 npm install -g canvas-mcp-server
-
-# Configure
-export CANVAS_API_TOKEN="your_token_here"
-export CANVAS_DOMAIN="your_school.instructure.com"
-
-# Run
-canvas-mcp-server
 ```
 
-### Option 3: Docker
+Then configure your MCP client to run `canvas-mcp-server` with the environment variables above.
 
-```bash
-docker run -d \
-  --name canvas-mcp \
-  -p 3000:3000 \
-  -e CANVAS_API_TOKEN="your_token" \
-  -e CANVAS_DOMAIN="school.instructure.com" \
-  -e MCP_TRANSPORT="streamable-http" \
-  -e MCP_HTTP_HOST="0.0.0.0" \
-  -e MCP_HTTP_PORT="3000" \
-  -e MCP_HTTP_PATH="/mcp" \
-  ghcr.io/dmontgomery40/mcp-canvas-lms:latest
-```
+### From source
 
-## Transport Modes
-
-The server supports two explicit transport modes:
-
-- `stdio` (default): best for Claude Desktop/Codex/Cursor local MCP wiring.
-- `streamable-http`: best for local HTTP integrations and containerized workflows.
-
-### Transport environment variables
-
-```bash
-# Required Canvas auth
-CANVAS_API_TOKEN=your_token
-CANVAS_DOMAIN=your_school.instructure.com
-
-# Transport selection
-MCP_TRANSPORT=stdio # or streamable-http
-
-# Streamable HTTP settings
-MCP_HTTP_HOST=127.0.0.1
-MCP_HTTP_PORT=3000
-MCP_HTTP_PATH=/mcp
-MCP_HTTP_STATEFUL=true
-MCP_HTTP_JSON_RESPONSE=true
-MCP_HTTP_ALLOWED_ORIGINS=
-```
-
-## 💼 Account Admin Workflow Examples
-
-### Create a New Course (FIXED!)
-```
-"Create a new course called 'Advanced Biology' in account 123"
-```
-**Now properly creates courses with required account_id parameter**
-
-### Manage Users
-```
-"Create a new student user John Doe with email john.doe@school.edu in our main account"
-```
-**Creates user accounts with proper pseudonym and enrollment setup**
-
-### Generate Reports
-```
-"Generate an enrollment report for account 456 for the current term"
-```
-**Initiates Canvas reporting system for institutional analytics**
-
-### List Account Courses
-```
-"Show me all published Computer Science courses in our Engineering account"
-```
-**Advanced filtering and searching across account course catalogs**
-
-## 🎓 Student Workflow Examples
-
-### Check Today's Assignments
-```
-"What assignments do I have due this week?"
-```
-**Lists upcoming assignments with due dates, points, and submission status**
-
-### Submit an Assignment
-```
-"Help me submit my essay for English 101 Assignment 3"
-```
-**Guides through text submission with formatting options**
-
-### Check Grades
-```
-"What's my current grade in Biology?"
-```
-**Shows current scores, grades, and assignment feedback**
-
-### Participate in Discussions
-```
-"Show me the latest discussion posts in my Philosophy class"
-```
-**Displays recent discussion topics and enables posting responses**
-
-### Track Progress
-```
-"What modules do I need to complete in Math 200?"
-```
-**Shows module completion status and next items to complete**
-
-## Getting Canvas API Token
-
-1. **Log into Canvas** → Account → Settings
-2. **Scroll to "Approved Integrations"**
-3. **Click "+ New Access Token"**
-4. **Enter description**: "Claude MCP Integration"
-5. **Copy the generated token** Save securely!
-
-⚠️ **Account Admin Note**: For account-level operations, ensure your API token has administrative privileges.
-
-## Production Deployment
-
-### Docker Compose
 ```bash
 git clone https://github.com/DMontgomery40/mcp-canvas-lms.git
 cd mcp-canvas-lms
-cp .env.example .env
-# Edit .env with your Canvas credentials
+npm install
+npm run build
+```
+
+## Getting your Canvas API token
+
+1. Log into Canvas
+2. Go to **Account** > **Settings**
+3. Scroll to **Approved Integrations**
+4. Click **+ New Access Token**
+5. Give it a name, click **Generate Token**
+6. Copy the token (you won't see it again)
+
+## Environment variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `CANVAS_API_TOKEN` | Yes | — | Your Canvas API access token |
+| `CANVAS_DOMAIN` | Yes | — | Your Canvas domain (e.g. `myschool.instructure.com`) |
+| `CANVAS_ROLE` | No | `all` | Tool filtering: `student`, `instructor`, `admin`, or `all` |
+| `MCP_TRANSPORT` | No | `stdio` | `stdio` for Claude Desktop, `streamable-http` for web clients |
+| `MCP_HTTP_PORT` | No | `3000` | Port for HTTP transport |
+| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error` |
+
+See `.env.example` for the full list.
+
+## Tools
+
+### Content extraction
+
+| Tool | Description |
+|------|-------------|
+| `canvas_get_file_content` | Download a file and extract readable text. Supports PDF, DOCX, PPTX, HTML, plain text. Offset/limit params for chunked reading. |
+| `canvas_get_course_content` | Bulk-extract text from all files and pages across a course's modules. Parallel downloads, date-range filtering, content-type filtering. |
+| `canvas_get_assignment_content` | Get assignment instructions as clean text (HTML stripped). |
+
+### Discovery and search
+
+| Tool | Description |
+|------|-------------|
+| `canvas_search_course_content` | Keyword search across files, pages, assignments, and discussions. Runs searches in parallel. |
+| `canvas_get_course_timeline` | Chronological map of all modules with items, due dates, and content types. |
+| `canvas_get_todo_items` | Your Canvas todo list — what needs attention. |
+| `canvas_get_unread_counts` | Unread activity summary across all courses. |
+| `canvas_get_submission_feedback` | Structured grading feedback: score, comments, rubric assessment. |
+
+### Course management
+
+| Tool | Description |
+|------|-------------|
+| `canvas_list_courses` | List all courses |
+| `canvas_get_course` | Get course details |
+| `canvas_create_course` | Create a new course |
+| `canvas_update_course` | Update course settings |
+| `canvas_get_syllabus` | Get course syllabus |
+
+### Assignments and grades
+
+| Tool | Description |
+|------|-------------|
+| `canvas_list_assignments` | List assignments for a course |
+| `canvas_get_assignment` | Get assignment details |
+| `canvas_create_assignment` | Create an assignment |
+| `canvas_update_assignment` | Update an assignment |
+| `canvas_list_assignment_groups` | List assignment groups |
+| `canvas_get_submission` | Get submission details |
+| `canvas_submit_assignment` | Submit work for an assignment |
+| `canvas_submit_grade` | Grade a submission (instructor) |
+| `canvas_get_course_grades` | Get grades for a course |
+| `canvas_get_user_grades` | Get all grades for current user |
+
+### Modules
+
+| Tool | Description |
+|------|-------------|
+| `canvas_list_modules` | List all modules |
+| `canvas_get_module` | Get module details |
+| `canvas_list_module_items` | List items in a module |
+| `canvas_get_module_item` | Get a module item |
+| `canvas_mark_module_item_complete` | Mark item complete |
+
+### Files and pages
+
+| Tool | Description |
+|------|-------------|
+| `canvas_list_files` | List files in a course or folder |
+| `canvas_get_file` | Get file metadata |
+| `canvas_list_folders` | List folders |
+| `canvas_list_pages` | List pages |
+| `canvas_get_page` | Get page content |
+
+### Discussions and announcements
+
+| Tool | Description |
+|------|-------------|
+| `canvas_list_discussion_topics` | List discussions |
+| `canvas_get_discussion_topic` | Get discussion details |
+| `canvas_post_to_discussion` | Post to a discussion |
+| `canvas_list_announcements` | List announcements |
+
+### Quizzes
+
+| Tool | Description |
+|------|-------------|
+| `canvas_list_quizzes` | List quizzes |
+| `canvas_get_quiz` | Get quiz details |
+| `canvas_create_quiz` | Create a quiz |
+| `canvas_start_quiz_attempt` | Start a quiz attempt |
+
+### Calendar and dashboard
+
+| Tool | Description |
+|------|-------------|
+| `canvas_list_calendar_events` | List calendar events |
+| `canvas_get_upcoming_assignments` | Get upcoming due dates |
+| `canvas_get_dashboard` | Get dashboard info |
+| `canvas_get_dashboard_cards` | Get dashboard cards |
+
+### Communication
+
+| Tool | Description |
+|------|-------------|
+| `canvas_list_conversations` | List conversations |
+| `canvas_get_conversation` | Get conversation details |
+| `canvas_create_conversation` | Send a message |
+| `canvas_list_notifications` | List notifications |
+
+### User management
+
+| Tool | Description |
+|------|-------------|
+| `canvas_get_user_profile` | Get your profile |
+| `canvas_update_user_profile` | Update your profile |
+| `canvas_enroll_user` | Enroll a user in a course |
+| `canvas_list_rubrics` | List rubrics |
+| `canvas_get_rubric` | Get rubric details |
+
+### Account administration
+
+| Tool | Description |
+|------|-------------|
+| `canvas_get_account` | Get account details |
+| `canvas_list_account_courses` | List account courses |
+| `canvas_list_account_users` | List account users |
+| `canvas_create_user` | Create a user |
+| `canvas_list_sub_accounts` | List sub-accounts |
+| `canvas_get_account_reports` | List reports |
+| `canvas_create_account_report` | Generate a report |
+
+## Role filtering
+
+Set `CANVAS_ROLE` to limit which tools are exposed:
+
+- **`student`** — ~44 read-focused tools. No course creation, user management, or admin tools.
+- **`all`** (default) — all 50+ tools including admin and write operations.
+
+## HTTP transport
+
+For web-based clients, set `MCP_TRANSPORT=streamable-http`:
+
+```bash
+CANVAS_API_TOKEN=xxx CANVAS_DOMAIN=xxx MCP_TRANSPORT=streamable-http node build/index.js
+```
+
+The server listens on `http://127.0.0.1:3000/mcp` by default. Configure with `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_PATH`.
+
+## Docker
+
+```bash
+docker build -t canvas-mcp .
+docker run --env-file .env canvas-mcp
+```
+
+Or with docker-compose:
+
+```bash
 docker-compose up -d
 ```
 
-### Kubernetes
-```bash
-kubectl create secret generic canvas-mcp-secrets \
-  --from-literal=CANVAS_API_TOKEN="your_token" \
-  --from-literal=CANVAS_DOMAIN="school.instructure.com"
+## Architecture
 
-kubectl apply -f k8s/
+```
+src/
+  index.ts            MCP server, tool definitions, request handlers
+  client.ts           Canvas API client with pagination, retry, caching
+  text-extraction.ts  PDF/DOCX/PPTX/HTML text extraction
+  types.ts            TypeScript type definitions
+  declarations.d.ts   Type declarations for pdf-parse, officeparser
 ```
 
-### Health Monitoring
-```bash
-# Check application health
-curl http://localhost:3000/health
+Key design decisions:
+- **File download cache** — LRU cache (20 files, 5-min TTL) avoids re-downloading files during chunked reads
+- **Parallel downloads** — `canvas_get_course_content` processes up to 5 items concurrently
+- **Response size management** — automatic truncation to stay under MCP's 1 MB response limit
+- **Structured errors** — every failure returns a typed error with `retryable`, `suggestion`, and `code` fields
 
-# Or use the built-in health check
-npm run health-check
-```
+## License
 
-## Development
-
-```bash
-# Setup development environment
-git clone https://github.com/DMontgomery40/mcp-canvas-lms.git
-cd mcp-canvas-lms
-npm install
-
-# Start development with hot reload
-npm run dev:watch
-
-# Run tests
-npm run test
-npm run coverage
-
-# Code quality
-npm run lint
-npm run type-check
-```
-
-## 📚 Available Tools (50+ Tools)
-
-<details>
-<summary><strong>🎓 Core Student Tools (Click to expand)</strong></summary>
-
-- `canvas_health_check` - Check API connectivity
-- `canvas_list_courses` - List all your courses
-- `canvas_get_course` - Get detailed course info
-- `canvas_list_assignments` - List course assignments
-- `canvas_get_assignment` - Get assignment details
-- `canvas_submit_assignment` - Submit assignment work
-- `canvas_get_submission` - Check submission status
-- `canvas_list_modules` - List course modules
-- `canvas_get_module` - Get module details
-- `canvas_list_module_items` - List items in a module
-- `canvas_mark_module_item_complete` - Mark items complete
-- `canvas_list_discussion_topics` - List discussion topics
-- `canvas_get_discussion_topic` - Get discussion details
-- `canvas_post_to_discussion` - Post to discussions
-- `canvas_list_announcements` - List course announcements
-- `canvas_get_user_grades` - Get your grades
-- `canvas_get_course_grades` - Get course-specific grades
-- `canvas_get_dashboard` - Get dashboard info
-- `canvas_get_dashboard_cards` - Get course cards
-- `canvas_get_upcoming_assignments` - Get due dates
-- `canvas_list_calendar_events` - List calendar events
-- `canvas_list_files` - List course files
-- `canvas_get_file` - Get file details
-- `canvas_list_folders` - List course folders
-- `canvas_list_pages` - List course pages
-- `canvas_get_page` - Get page content
-- `canvas_list_conversations` - List messages
-- `canvas_get_conversation` - Get conversation details
-- `canvas_create_conversation` - Send messages
-- `canvas_list_notifications` - List notifications
-- `canvas_get_syllabus` - Get course syllabus
-- `canvas_get_user_profile` - Get user profile
-- `canvas_update_user_profile` - Update profile
-
-</details>
-
-<details>
-<summary><strong>👨‍🏫 Instructor Tools (Click to expand)</strong></summary>
-
-- `canvas_create_course` - Create new courses *(FIXED: now requires account_id)*
-- `canvas_update_course` - Update course settings
-- `canvas_create_assignment` - Create assignments
-- `canvas_update_assignment` - Update assignments
-- `canvas_list_assignment_groups` - List assignment groups
-- `canvas_submit_grade` - Grade submissions
-- `canvas_enroll_user` - Enroll students
-- `canvas_list_quizzes` - List course quizzes
-- `canvas_get_quiz` - Get quiz details
-- `canvas_create_quiz` - Create quizzes
-- `canvas_start_quiz_attempt` - Start quiz attempts
-- `canvas_list_rubrics` - List course rubrics
-- `canvas_get_rubric` - Get rubric details
-
-</details>
-
-<details>
-<summary><strong>👨‍💼 Account Management Tools (NEW!)</strong></summary>
-
-- `canvas_get_account` - Get account details
-- `canvas_list_account_courses` - List courses in an account
-- `canvas_list_account_users` - List users in an account  
-- `canvas_create_user` - Create new users in accounts
-- `canvas_list_sub_accounts` - List sub-accounts
-- `canvas_get_account_reports` - List available reports
-- `canvas_create_account_report` - Generate account reports
-
-</details>
-
-## 🔧 Breaking Changes in v2.2.0
-
-### Course Creation Fix
-**BEFORE (Broken):**
-```javascript
-{
-  "tool": "canvas_create_course",
-  "arguments": {
-    "name": "My Course"  // ❌ Missing account_id - caused "page not found"
-  }
-}
-```
-
-**AFTER (Fixed):**
-```javascript
-{
-  "tool": "canvas_create_course", 
-  "arguments": {
-    "account_id": 123,              // ✅ Required account_id
-    "name": "My Course",
-    "course_code": "CS-101"
-  }
-}
-```
-
-## 🌟 Example Claude Conversations
-
-**Student**: *"I need to check my upcoming assignments and submit my English essay"*
-
-**Claude**: *I'll help you check your upcoming assignments and then assist with submitting your English essay. Let me start by getting your upcoming assignments...*
-
-[Claude uses `canvas_get_upcoming_assignments` then helps with `canvas_submit_assignment`]
-
----
-
-**Instructor**: *"Create a new Advanced Physics course in the Science department and enroll my teaching assistant"*
-
-**Claude**: *I'll help you create the Advanced Physics course in your Science department account and then enroll your TA...*
-
-[Claude uses `canvas_create_course` with proper account_id, then `canvas_enroll_user`]
-
----
-
-**Administrator**: *"Generate an enrollment report for all Computer Science courses this semester"*
-
-**Claude**: *I'll generate a comprehensive enrollment report for your CS courses...*
-
-[Claude uses `canvas_list_account_courses` with filters, then `canvas_create_account_report`]
-
-## 🔍 Troubleshooting
-
-**Common Issues:**
-- ❌ **401 Unauthorized**: Check your API token and permissions
-- ❌ **404 Not Found**: Verify course/assignment IDs and access rights  
-- ❌ **"Page not found" on course creation**: Update to v2.2.0 for account_id fix
-- ❌ **Timeout**: Increase `CANVAS_TIMEOUT` or check network connectivity
-
-**Debug Mode:**
-```bash
-export LOG_LEVEL=debug
-npm start
-```
-
-**Health Check:**
-```bash
-npm run health-check
-```
-
-## 🤝 Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Quick Contribution Setup
-```bash
-git clone https://github.com/DMontgomery40/mcp-canvas-lms.git
-cd mcp-canvas-lms
-npm install
-npm run dev:watch
-# Make changes, add tests, submit PR
-```
-
-## 📈 Roadmap
-
-- **v2.3**: Enhanced reporting, bulk operations, advanced search
-- **v2.4**: Mobile support, offline capability, analytics dashboard  
-- **v3.0**: Multi-tenant, GraphQL API, AI-powered insights
-
-## 🙋 Support & Community
-
-- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/DMontgomery40/mcp-canvas-lms/issues)
-- 💬 **Questions**: [GitHub Discussions](https://github.com/DMontgomery40/mcp-canvas-lms/discussions)
-- 📖 **Documentation**: [Wiki](https://github.com/DMontgomery40/mcp-canvas-lms/wiki)
-
-## Appendix: MCP in Practice (Code Execution, Tool Scale, and Safety)
-
-Last updated: 2026-02-24
-
-### Why This Appendix Exists
-MCP is still one of the most useful interoperability layers for agentic tooling. The tradeoff is that large MCP servers can expose dozens of tools, and naive tool-calling can flood context windows with tool schemas, call traces, and low-signal chatter.
-
-In practice, larger tool surfaces only help when orchestration stays token-efficient and execution behavior is constrained.
-
-### The Shift to Code Execution / Code Mode
-Recent production workflows move orchestration out of conversational turns and into executable loops. This keeps context overhead lower, improves determinism, and makes runs auditable.
-
-Core reading:
-- [Cloudflare: Code Mode](https://blog.cloudflare.com/code-mode/)
-- [Cloudflare: Code Execution with MCP](https://blog.cloudflare.com/code-execution-with-mcp/)
-- [Anthropic: Code Execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp)
-
-### Recommended Setup for Power Users
-For lower-noise, repeatable MCP usage, start with codemode-oriented routing:
-- [codemode-mcp (jx-codes)](https://github.com/jx-codes/codemode-mcp)
-- [UTCP](https://www.utcp.io)
-
-Even with strong setup, model behavior can be hit-or-miss across providers and versions. Keep retries and deterministic fallbacks.
-
-### Peter Steinberger Workflow Pattern
-A high-leverage pattern is turning broad MCP tool surfaces into narrower CLI/task interfaces:
-- [MCPorter](https://github.com/steipete/mcporter)
-- [OpenClaw](https://github.com/steipete/openclaw)
-
-### What Works Best With Which MCP Clients
-- Claude Code / Codex / Cursor agent workflows: usually strong for direct MCP + code-execution loops.
-- Thin hosted chat clients: often safer with wrapped CLIs/gateways instead of full raw tool exposure.
-- High-tool-count servers: usually better when split into narrow task gateways.
-
-This ecosystem changes quickly. If you are reading this now, parts of this section may already be out of date.
-
-### Prompt Injection: Risks, Consequences, and Mitigations
-Prompt injection remains an open problem for tool-using agents. It is manageable, but not solved.
-
-Primary risks:
-- Hidden instructions in retrieved content or tool output.
-- Secret/token exfiltration through unintended calls.
-- Unauthorized state changes in systems or data.
-
-Mitigation baseline:
-- Least-privilege credentials and scoped tokens.
-- Destination/action allowlists and strict schema validation.
-- Human confirmation for destructive operations.
-- Sandboxed execution and resource limits.
-- Structured logging and replayable execution traces.
-
-Treat every tool output as untrusted input unless explicitly verified.
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-<div align="center">
-  <strong>Canvas MCP Server v2.2.0</strong><br>
-  <em>Empowering students, educators, and administrators with seamless Canvas integration</em><br><br>
-  
-  ⭐ **Star this repo if it helps you!** ⭐
-</div>
+MIT

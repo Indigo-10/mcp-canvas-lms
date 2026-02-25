@@ -42,12 +42,23 @@ import {
 } from './types.js';
 
 export class CanvasClient {
+  private static readonly MAX_PAGES = 50;
+  private static readonly FILE_CACHE_MAX = 20;
+  private static readonly FILE_CACHE_TTL = 5 * 60 * 1000;
+
   private client: AxiosInstance;
   private baseURL: string;
   private maxRetries: number = 3;
   private retryDelay: number = 1000;
+  private fileCache = new Map<number, { buffer: Buffer; file: CanvasFile; cachedAt: number }>();
 
   constructor(token: string, domain: string, options?: { maxRetries?: number; retryDelay?: number }) {
+    if (!token || !token.trim()) {
+      throw new Error("Canvas API token is required and cannot be empty");
+    }
+    if (!domain || !domain.trim()) {
+      throw new Error("Canvas domain is required and cannot be empty");
+    }
     this.baseURL = `https://${domain}/api/v1`;
     this.maxRetries = options?.maxRetries ?? 3;
     this.retryDelay = options?.retryDelay ?? 1000;
@@ -65,10 +76,11 @@ export class CanvasClient {
   }
 
   private setupInterceptors(): void {
-    // Request interceptor for logging
     this.client.interceptors.request.use(
       (config) => {
-        console.error(`[Canvas API] ${config.method?.toUpperCase()} ${config.url}`);
+        if (process.env.LOG_LEVEL === "debug") {
+          console.error(`[Canvas API] ${config.method?.toUpperCase()} ${config.url}`);
+        }
         return config;
       },
       (error) => {
@@ -84,15 +96,20 @@ export class CanvasClient {
         const linkHeader = headers.link;
         const contentType = headers['content-type'] || '';
 
-        // Only handle pagination for JSON responses
         if (Array.isArray(data) && linkHeader && contentType.includes('application/json')) {
           let allData = [...data];
           let nextUrl = this.getNextPageUrl(linkHeader);
+          let pageCount = 0;
 
-          while (nextUrl) {
-            const nextResponse = await this.client.get(nextUrl);
-            allData = [...allData, ...nextResponse.data];
-            nextUrl = this.getNextPageUrl(nextResponse.headers.link);
+          try {
+            while (nextUrl && pageCount < CanvasClient.MAX_PAGES) {
+              pageCount++;
+              const nextResponse = await this.client.get(nextUrl);
+              allData = [...allData, ...nextResponse.data];
+              nextUrl = this.getNextPageUrl(nextResponse.headers.link);
+            }
+          } catch (paginationError) {
+            console.error('[Canvas API] Pagination stopped early:', paginationError instanceof Error ? paginationError.message : paginationError);
           }
 
           response.data = allData;
@@ -103,9 +120,10 @@ export class CanvasClient {
       async (error: AxiosError) => {
         const config = error.config as any;
         
-        // Retry logic for specific errors
+        if (config) {
+          config.__retryCount = config.__retryCount ?? 0;
+        }
         if (this.shouldRetry(error) && config && config.__retryCount < this.maxRetries) {
-          config.__retryCount = config.__retryCount || 0;
           config.__retryCount++;
           
           const delay = this.retryDelay * Math.pow(2, config.__retryCount - 1); // Exponential backoff
@@ -178,7 +196,8 @@ export class CanvasClient {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  private getNextPageUrl(linkHeader: string): string | null {
+  private getNextPageUrl(linkHeader: string | undefined | null): string | null {
+    if (!linkHeader) return null;
     const links = linkHeader.split(',');
     const nextLink = links.find(link => link.includes('rel="next"'));
     if (!nextLink) return null;
@@ -190,7 +209,7 @@ export class CanvasClient {
   // ---------------------
   // HEALTH CHECK
   // ---------------------
-  async healthCheck(): Promise<{ status: 'ok' | 'error'; timestamp: string; user?: any }> {
+  async healthCheck(): Promise<{ status: 'ok' | 'error'; timestamp: string; user?: any; error?: string }> {
     try {
       const user = await this.getUserProfile();
       return {
@@ -201,7 +220,8 @@ export class CanvasClient {
     } catch (error) {
       return {
         status: 'error',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error)
       };
     }
   }
@@ -395,6 +415,29 @@ export class CanvasClient {
   async getFile(fileId: number): Promise<CanvasFile> {
     const response = await this.client.get(`/files/${fileId}`);
     return response.data;
+  }
+
+  async downloadFileContent(fileId: number): Promise<{ buffer: Buffer; file: CanvasFile }> {
+    const cached = this.fileCache.get(fileId);
+    if (cached && Date.now() - cached.cachedAt < CanvasClient.FILE_CACHE_TTL) {
+      return { buffer: cached.buffer, file: cached.file };
+    }
+
+    const file = await this.getFile(fileId);
+    const response = await axios.get(file.url, {
+      responseType: 'arraybuffer',
+      maxRedirects: 5,
+      timeout: 120000
+    });
+    const buffer = Buffer.from(response.data);
+
+    if (this.fileCache.size >= CanvasClient.FILE_CACHE_MAX) {
+      const oldestKey = this.fileCache.keys().next().value;
+      if (oldestKey !== undefined) this.fileCache.delete(oldestKey);
+    }
+    this.fileCache.set(fileId, { buffer, file, cachedAt: Date.now() });
+
+    return { buffer, file };
   }
 
   async uploadFile(args: FileUploadArgs): Promise<CanvasFile> {
@@ -681,7 +724,7 @@ export class CanvasClient {
   // ---------------------
   // ANNOUNCEMENTS (Enhanced)
   // ---------------------
-  async listAnnouncements(courseId: string): Promise<CanvasAnnouncement[]> {
+  async listAnnouncements(courseId: number): Promise<CanvasAnnouncement[]> {
     const response = await this.client.get(`/courses/${courseId}/discussion_topics`, {
       params: {
         type: 'announcement',
@@ -694,12 +737,12 @@ export class CanvasClient {
   // ---------------------
   // QUIZZES (Enhanced)
   // ---------------------
-  async listQuizzes(courseId: string): Promise<CanvasQuiz[]> {
+  async listQuizzes(courseId: number): Promise<CanvasQuiz[]> {
     const response = await this.client.get(`/courses/${courseId}/quizzes`);
     return response.data;
   }
 
-  async getQuiz(courseId: string, quizId: number): Promise<CanvasQuiz> {
+  async getQuiz(courseId: number, quizId: number): Promise<CanvasQuiz> {
     const response = await this.client.get(`/courses/${courseId}/quizzes/${quizId}`);
     return response.data;
   }
@@ -730,7 +773,7 @@ export class CanvasClient {
   async submitQuizAttempt(courseId: number, quizId: number, submissionId: number, answers: any): Promise<any> {
     const response = await this.client.post(
       `/courses/${courseId}/quizzes/${quizId}/submissions/${submissionId}/complete`,
-      { quiz_submissions: [{ attempt: 1, questions: answers }] }
+      { attempt: 1, validation_token: undefined, quiz_questions: answers }
     );
     return response.data;
   }
@@ -797,6 +840,36 @@ export class CanvasClient {
 
   async getAccountReport(accountId: number, reportType: string, reportId: number): Promise<CanvasAccountReport> {
     const response = await this.client.get(`/accounts/${accountId}/reports/${reportType}/${reportId}`);
+    return response.data;
+  }
+
+  // ---------------------
+  // SEARCH
+  // ---------------------
+  async searchFiles(courseId: number, searchTerm: string): Promise<CanvasFile[]> {
+    const response = await this.client.get(`/courses/${courseId}/files`, {
+      params: { search_term: searchTerm }
+    });
+    return response.data;
+  }
+
+  async searchPages(courseId: number, searchTerm: string): Promise<CanvasPage[]> {
+    const response = await this.client.get(`/courses/${courseId}/pages`, {
+      params: { search_term: searchTerm }
+    });
+    return response.data;
+  }
+
+  // ---------------------
+  // TODO & ACTIVITY
+  // ---------------------
+  async getTodoItems(): Promise<any[]> {
+    const response = await this.client.get('/users/self/todo');
+    return response.data;
+  }
+
+  async getActivityStreamSummary(): Promise<any[]> {
+    const response = await this.client.get('/users/self/activity_stream/summary');
     return response.data;
   }
 }

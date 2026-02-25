@@ -705,6 +705,7 @@ export interface MCPServerConfig {
   name: string;
   version: string;
   canvas: CanvasClientConfig;
+  role?: 'student' | 'instructor' | 'admin' | 'all';
   transport?: MCPTransportConfig;
   logging?: {
     level: 'debug' | 'info' | 'warn' | 'error';

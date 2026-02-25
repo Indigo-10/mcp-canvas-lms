@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-02-25
+
+### Added
+- **Content extraction** — `canvas_get_file_content` downloads files (PDF, DOCX, PPTX, HTML, plain text) from Canvas and extracts readable text. Supports offset/limit for chunked reading of large documents.
+- **Bulk course content** — `canvas_get_course_content` walks all modules in a course, downloads every file and page, extracts text, and returns a combined dump. Parallel downloads (5 concurrent), date-range filtering (`before_date`/`after_date`), content-type filtering.
+- **Course search** — `canvas_search_course_content` searches files, pages, assignments, and discussions by keyword in parallel.
+- **Course timeline** — `canvas_get_course_timeline` returns a chronological map of every module and item with due dates, unlock dates, and content types. Enables "everything before midterms" queries.
+- **Assignment content** — `canvas_get_assignment_content` extracts clean text from assignment instructions (HTML stripped).
+- **Submission feedback** — `canvas_get_submission_feedback` returns structured grading feedback: score, comments, rubric assessment, late/missing status.
+- **Todo items** — `canvas_get_todo_items` returns the user's Canvas todo list.
+- **Unread counts** — `canvas_get_unread_counts` returns activity stream summary across all courses.
+- **Text extraction engine** — new `text-extraction.ts` module using `pdf-parse` for PDFs and `officeparser` for DOCX/PPTX, plus an HTML-to-text stripper.
+- **File download caching** — LRU cache (20 files, 5-min TTL) in `CanvasClient` avoids re-downloading files during chunked reads.
+- New dependencies: `pdf-parse`, `officeparser`.
+
+### Changed
+- `canvas_get_course_content` now processes items with parallel downloads instead of sequentially (~5x faster).
+- `downloadFileContent()` eliminates double metadata fetches via caching.
+- Student tool set expanded from ~38 to ~44 tools.
+- `READ_ONLY_TOOL_PREFIXES` now includes `canvas_search_`.
+
+### Removed
+- Test infrastructure (vitest, coverage, lint-staged, husky, eslint, prettier).
+- Legacy `dist/` directory and temporary scripts.
+- Version-specific release/deploy scripts.
+
 ## [2.2.3] - 2025-06-27
 
 ### Fixed

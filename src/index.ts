@@ -13,7 +13,7 @@ import {
   Tool
 } from "@modelcontextprotocol/sdk/types.js";
 import { CanvasClient } from "./client.js";
-import * as dotenv from "dotenv";
+import { detectContentType, extractText, stripHtml } from "./text-extraction.js";
 import {
   CreateCourseArgs,
   UpdateCourseArgs,
@@ -40,7 +40,29 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
-// Enhanced tools list with all student-focused endpoints
+async function pMap<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  concurrency: number
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const idx = nextIndex++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker()
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 const RAW_TOOLS: Tool[] = [
   // Health and system tools
   {
@@ -307,6 +329,39 @@ const RAW_TOOLS: Tool[] = [
         file_id: { type: "number", description: "ID of the file" }
       },
       required: ["file_id"]
+    }
+  },
+  {
+    name: "canvas_get_file_content",
+    description: "Download a file from Canvas by file ID, extract its readable text, and return it. Supports PDF, DOCX, PPTX, HTML, and plain text. Use offset/limit for chunked reading of large documents.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file_id: { type: "number", description: "ID of the file to download and extract text from" },
+        offset: { type: "number", description: "Character offset to start reading from (default: 0)" },
+        limit: { type: "number", description: "Maximum number of characters to return (default: all)" }
+      },
+      required: ["file_id"]
+    }
+  },
+  {
+    name: "canvas_get_course_content",
+    description: "Bulk-extract readable text from all files and pages across a course's modules. Downloads files in parallel for speed. Optionally filter by module_id, content_type, or date range. Supports 'before midterms' style queries when combined with canvas_get_course_timeline.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        course_id: { type: "number", description: "ID of the course" },
+        module_id: { type: "number", description: "Only process items from this specific module" },
+        content_type: {
+          type: "string",
+          enum: ["pdf", "docx", "pptx", "html", "page", "text", "all"],
+          description: "Filter by content type. 'page' = Canvas pages only, 'all' = everything (default: all)"
+        },
+        max_items: { type: "number", description: "Maximum number of content items to process (default: 50, max: 200)" },
+        before_date: { type: "string", description: "Only include items due/unlocked before this ISO date" },
+        after_date: { type: "string", description: "Only include items due/unlocked after this ISO date" }
+      },
+      required: ["course_id"]
     }
   },
   {
@@ -715,6 +770,89 @@ const RAW_TOOLS: Tool[] = [
     }
   },
 
+  // Search
+  {
+    name: "canvas_search_course_content",
+    description: "Search across a course's files, pages, assignments, and discussions by keyword. Returns matching items with types and locations. Runs searches in parallel for speed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        course_id: { type: "number", description: "ID of the course" },
+        search_term: { type: "string", description: "Keyword or phrase to search for" },
+        content_types: {
+          type: "array",
+          items: { type: "string", enum: ["files", "pages", "assignments", "discussions"] },
+          description: "Which content types to search (default: all four)"
+        }
+      },
+      required: ["course_id", "search_term"]
+    }
+  },
+
+  // Course timeline
+  {
+    name: "canvas_get_course_timeline",
+    description: "Get a chronological map of a course: all modules in order with their items, due dates, unlock dates, and content types. Essential for understanding course structure and answering questions like 'what's due before midterms'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        course_id: { type: "number", description: "ID of the course" }
+      },
+      required: ["course_id"]
+    }
+  },
+
+  // Assignment content extraction
+  {
+    name: "canvas_get_assignment_content",
+    description: "Get the full text content of an assignment's instructions/description with HTML stripped to clean readable text, plus key metadata like due date, points, and submission types.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        course_id: { type: "number", description: "ID of the course" },
+        assignment_id: { type: "number", description: "ID of the assignment" }
+      },
+      required: ["course_id", "assignment_id"]
+    }
+  },
+
+  // Submission feedback
+  {
+    name: "canvas_get_submission_feedback",
+    description: "Get structured feedback for a submission: grade, score, instructor comments, rubric assessment, and late/missing status. Defaults to the current user's submission.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        course_id: { type: "number", description: "ID of the course" },
+        assignment_id: { type: "number", description: "ID of the assignment" },
+        user_id: { type: "number", description: "User ID (defaults to self)" }
+      },
+      required: ["course_id", "assignment_id"]
+    }
+  },
+
+  // Todo items
+  {
+    name: "canvas_get_todo_items",
+    description: "Get the current user's Canvas todo list — items needing attention like unsubmitted assignments, upcoming due dates, and ungraded work.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
+  },
+
+  // Unread counts / activity summary
+  {
+    name: "canvas_get_unread_counts",
+    description: "Get a summary of unread activity across all courses — unread discussions, messages, submissions needing attention, and other notifications.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
+  },
+
   // Account Management
   {
     name: "canvas_get_account",
@@ -840,7 +978,7 @@ type StreamableHttpRuntime = {
   httpServer: HttpServer;
 };
 
-const READ_ONLY_TOOL_PREFIXES = ["canvas_list_", "canvas_get_", "canvas_health_check"] as const;
+const READ_ONLY_TOOL_PREFIXES = ["canvas_list_", "canvas_get_", "canvas_search_", "canvas_health_check"] as const;
 const MUTATING_TOOL_PREFIXES = [
   "canvas_create_",
   "canvas_update_",
@@ -963,26 +1101,83 @@ function optimizeToolInputSchema(tool: Tool): Tool["inputSchema"] {
     type: "object",
     ...schema,
     properties: optimizedProperties,
-    required,
-    additionalProperties: false
+    required
   } as Tool["inputSchema"];
 }
 
-const TOOLS: Tool[] = RAW_TOOLS.map((tool) => ({
+const ALL_TOOLS: Tool[] = RAW_TOOLS.map((tool) => ({
   ...tool,
   description: optimizeToolDescription(tool),
   inputSchema: optimizeToolInputSchema(tool),
   annotations: optimizeToolAnnotations(tool.name)
 }));
 
+const STUDENT_TOOL_NAMES = new Set([
+  "canvas_health_check",
+  "canvas_list_courses",
+  "canvas_get_course",
+  "canvas_list_assignments",
+  "canvas_get_assignment",
+  "canvas_get_submission",
+  "canvas_submit_assignment",
+  "canvas_list_modules",
+  "canvas_get_module",
+  "canvas_list_module_items",
+  "canvas_get_module_item",
+  "canvas_mark_module_item_complete",
+  "canvas_list_files",
+  "canvas_get_file",
+  "canvas_get_file_content",
+  "canvas_get_course_content",
+  "canvas_list_folders",
+  "canvas_list_pages",
+  "canvas_get_page",
+  "canvas_search_course_content",
+  "canvas_get_course_timeline",
+  "canvas_get_assignment_content",
+  "canvas_get_submission_feedback",
+  "canvas_get_todo_items",
+  "canvas_get_unread_counts",
+  "canvas_list_discussion_topics",
+  "canvas_get_discussion_topic",
+  "canvas_post_to_discussion",
+  "canvas_list_announcements",
+  "canvas_get_course_grades",
+  "canvas_get_user_grades",
+  "canvas_get_user_profile",
+  "canvas_list_calendar_events",
+  "canvas_get_upcoming_assignments",
+  "canvas_get_dashboard",
+  "canvas_get_dashboard_cards",
+  "canvas_list_quizzes",
+  "canvas_get_quiz",
+  "canvas_start_quiz_attempt",
+  "canvas_list_conversations",
+  "canvas_get_conversation",
+  "canvas_create_conversation",
+  "canvas_list_notifications",
+  "canvas_get_syllabus",
+  "canvas_list_rubrics",
+  "canvas_get_rubric"
+]);
+
+function getToolsForRole(role: string): Tool[] {
+  if (role === "student") {
+    return ALL_TOOLS.filter((tool) => STUDENT_TOOL_NAMES.has(tool.name));
+  }
+  return ALL_TOOLS;
+}
+
 export class CanvasMCPServer {
   private readonly server: Server;
   private readonly client: CanvasClient;
   private readonly config: MCPServerConfig;
+  private readonly tools: Tool[];
   private streamableHttpRuntime: StreamableHttpRuntime | undefined;
 
   constructor(config: MCPServerConfig, client?: CanvasClient) {
     this.config = config;
+    this.tools = getToolsForRole(config.role ?? "all");
     this.client = client ?? new CanvasClient(
       config.canvas.token,
       config.canvas.domain,
@@ -1015,24 +1210,77 @@ export class CanvasMCPServer {
     };
   }
 
+  private static readonly MAX_RESPONSE_BYTES = 900_000; // 900 KB, under Claude's 1 MB MCP limit
+
+  private static readonly HEAVY_FIELDS = ["body", "description", "message", "syllabus_body", "html_url", "preview_url"];
+
+  private stripHeavyFields(obj: Record<string, unknown>): Record<string, unknown> {
+    const stripped: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (CanvasMCPServer.HEAVY_FIELDS.includes(key) && typeof value === "string" && value.length > 500) {
+        stripped[key] = (value as string).slice(0, 500) + "... [truncated]";
+      } else {
+        stripped[key] = value;
+      }
+    }
+    return stripped;
+  }
+
   private serializeToolOutput(payload: unknown, includeRaw: boolean): string {
+    if (payload === null || payload === undefined) {
+      return JSON.stringify({ result: null });
+    }
+
     if (includeRaw) {
-      return JSON.stringify(payload, null, 2);
+      const raw = JSON.stringify(payload, null, 2);
+      if (Buffer.byteLength(raw, "utf8") <= CanvasMCPServer.MAX_RESPONSE_BYTES) {
+        return raw;
+      }
     }
 
     if (Array.isArray(payload)) {
-      return JSON.stringify(
-        {
-          count: payload.length,
-          items: payload.slice(0, 5),
-          has_more: payload.length > 5
-        },
-        null,
-        2
-      );
+      let itemCount = Math.min(payload.length, 25);
+      while (itemCount > 0) {
+        const slice = payload.slice(0, itemCount).map((item) =>
+          item && typeof item === "object" && !Array.isArray(item)
+            ? this.stripHeavyFields(item as Record<string, unknown>)
+            : item
+        );
+        const serialized = JSON.stringify(
+          { count: payload.length, items: slice, has_more: payload.length > itemCount },
+          null,
+          2
+        );
+        if (Buffer.byteLength(serialized, "utf8") <= CanvasMCPServer.MAX_RESPONSE_BYTES) {
+          return serialized;
+        }
+        itemCount = Math.floor(itemCount / 2);
+      }
+      return JSON.stringify({
+        count: payload.length,
+        items: [],
+        has_more: true,
+        error: "Items too large to serialize. Request individual items by ID."
+      });
     }
 
-    return JSON.stringify(payload, null, 2);
+    const full = JSON.stringify(payload, null, 2);
+    if (Buffer.byteLength(full, "utf8") <= CanvasMCPServer.MAX_RESPONSE_BYTES) {
+      return full;
+    }
+
+    if (payload && typeof payload === "object") {
+      const stripped = this.stripHeavyFields(payload as Record<string, unknown>);
+      const strippedJson = JSON.stringify({ ...stripped, _truncated: true }, null, 2);
+      if (Buffer.byteLength(strippedJson, "utf8") <= CanvasMCPServer.MAX_RESPONSE_BYTES) {
+        return strippedJson;
+      }
+    }
+
+    return JSON.stringify({
+      error: "Response too large. Try requesting a more specific resource.",
+      _truncated: true
+    });
   }
 
   private isRetryable(error: unknown): boolean {
@@ -1220,11 +1468,11 @@ export class CanvasMCPServer {
             break;
 
           case "announcements":
-            content = await this.client.listAnnouncements(id);
+            content = await this.client.listAnnouncements(parseInt(id));
             break;
           
           case "quizzes":
-            content = await this.client.listQuizzes(id);
+            content = await this.client.listQuizzes(parseInt(id));
             break;
 
           case "pages":
@@ -1257,6 +1505,10 @@ export class CanvasMCPServer {
             throw new Error(`Unknown resource type: ${type}`);
         }
 
+        if (content === undefined || content === null) {
+          throw new Error(`No content found for resource: ${uri}`);
+        }
+
         return {
           contents: [{
             uri: request.params.uri,
@@ -1276,9 +1528,8 @@ export class CanvasMCPServer {
       }
     });
 
-    // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: TOOLS
+      tools: this.tools
     }));
 
     // Handle tool calls with comprehensive error handling
@@ -1464,6 +1715,169 @@ export class CanvasMCPServer {
             const file = await this.client.getFile(file_id);
             return {
               content: [{ type: "text", text: this.serializeToolOutput(file, includeRaw) }]
+            };
+          }
+
+          case "canvas_get_file_content": {
+            const { file_id, offset = 0, limit: charLimit } = args as {
+              file_id: number;
+              offset?: number;
+              limit?: number;
+            };
+            if (!file_id) throw new Error("Missing required field: file_id");
+
+            const { buffer, file: fileMeta } = await this.client.downloadFileContent(file_id);
+            const detectedType = detectContentType(fileMeta.content_type, fileMeta.filename);
+
+            if (detectedType === 'unsupported') {
+              return {
+                content: [{
+                  type: "text",
+                  text: JSON.stringify({
+                    error: `Unsupported file type for text extraction: ${fileMeta.content_type} (${fileMeta.filename})`,
+                    supported_types: ["pdf", "docx", "pptx", "html", "txt"]
+                  })
+                }]
+              };
+            }
+
+            let extractedText = await extractText(buffer, detectedType);
+            const totalLength = extractedText.length;
+
+            if (offset > 0) {
+              extractedText = extractedText.slice(offset);
+            }
+            if (charLimit !== undefined && charLimit > 0) {
+              extractedText = extractedText.slice(0, charLimit);
+            }
+
+            const result = {
+              file_id: fileMeta.id,
+              filename: fileMeta.display_name,
+              content_type: fileMeta.content_type,
+              detected_type: detectedType,
+              file_size_bytes: fileMeta.size,
+              total_text_length: totalLength,
+              offset,
+              returned_length: extractedText.length,
+              has_more: offset + extractedText.length < totalLength,
+              content: extractedText
+            };
+
+            return {
+              content: [{ type: "text", text: this.serializeToolOutput(result, includeRaw) }]
+            };
+          }
+
+          case "canvas_get_course_content": {
+            const {
+              course_id,
+              module_id: filterModuleId,
+              content_type: filterType = "all",
+              max_items = 50,
+              before_date: beforeDateStr,
+              after_date: afterDateStr
+            } = args as {
+              course_id: number;
+              module_id?: number;
+              content_type?: string;
+              max_items?: number;
+              before_date?: string;
+              after_date?: string;
+            };
+            if (!course_id) throw new Error("Missing required field: course_id");
+
+            const effectiveMax = Math.min(Math.max(max_items, 1), 200);
+            const PER_ITEM_CHAR_LIMIT = 20_000;
+            const DOWNLOAD_CONCURRENCY = 5;
+            const beforeDate = beforeDateStr ? new Date(beforeDateStr) : null;
+            const afterDate = afterDateStr ? new Date(afterDateStr) : null;
+
+            let modules = await this.client.listModules(course_id);
+            if (filterModuleId) {
+              modules = modules.filter(m => m.id === filterModuleId);
+              if (modules.length === 0) {
+                throw new Error(`Module ${filterModuleId} not found in course ${course_id}`);
+              }
+            }
+
+            type PendingItem = {
+              modName: string;
+              modId: number;
+              item: { type: string; title: string; page_url?: string; content_id?: number; content_details?: { due_at?: string; unlock_at?: string; lock_at?: string } };
+            };
+            const pendingItems: PendingItem[] = [];
+
+            for (const mod of modules) {
+              const items = mod.items ?? await this.client.listModuleItems(course_id, mod.id);
+              for (const item of items) {
+                if (beforeDate || afterDate) {
+                  const itemDate = item.content_details?.due_at || item.content_details?.unlock_at;
+                  if (itemDate) {
+                    const d = new Date(itemDate);
+                    if (beforeDate && d >= beforeDate) continue;
+                    if (afterDate && d <= afterDate) continue;
+                  }
+                }
+                if (item.type === 'Page') {
+                  if (filterType !== 'all' && filterType !== 'page' && filterType !== 'html') continue;
+                  pendingItems.push({ modName: mod.name, modId: mod.id, item });
+                } else if (item.type === 'File' && item.content_id) {
+                  pendingItems.push({ modName: mod.name, modId: mod.id, item });
+                }
+                if (pendingItems.length >= effectiveMax) break;
+              }
+              if (pendingItems.length >= effectiveMax) break;
+            }
+
+            type ContentResult = {
+              module_name: string; module_id: number; item_title: string;
+              item_type: string; detected_type: string; char_count: number;
+              truncated: boolean; content: string; error?: string;
+            } | null;
+
+            const processItem = async (pending: PendingItem): Promise<ContentResult> => {
+              const { modName, modId, item } = pending;
+              try {
+                if (item.type === 'Page') {
+                  if (!item.page_url) return null;
+                  const pageData = await this.client.getPage(course_id, item.page_url);
+                  let text = pageData.body ? stripHtml(pageData.body) : '';
+                  const truncated = text.length > PER_ITEM_CHAR_LIMIT;
+                  if (truncated) text = text.slice(0, PER_ITEM_CHAR_LIMIT);
+                  return { module_name: modName, module_id: modId, item_title: item.title, item_type: 'Page', detected_type: 'html', char_count: truncated ? (pageData.body?.length ?? 0) : text.length, truncated, content: text };
+                } else if (item.type === 'File' && item.content_id) {
+                  const { buffer: fileBuf, file: fileInfo } = await this.client.downloadFileContent(item.content_id);
+                  const detected = detectContentType(fileInfo.content_type, fileInfo.filename);
+                  if (detected === 'unsupported') return null;
+                  if (filterType !== 'all' && filterType !== detected) return null;
+                  let text = await extractText(fileBuf, detected);
+                  const truncated = text.length > PER_ITEM_CHAR_LIMIT;
+                  if (truncated) text = text.slice(0, PER_ITEM_CHAR_LIMIT);
+                  return { module_name: modName, module_id: modId, item_title: item.title, item_type: 'File', detected_type: detected, char_count: truncated ? -1 : text.length, truncated, content: text };
+                }
+                return null;
+              } catch (itemErr) {
+                return { module_name: modName, module_id: modId, item_title: item.title, item_type: item.type, detected_type: 'unknown', char_count: 0, truncated: false, content: '', error: itemErr instanceof Error ? itemErr.message : String(itemErr) };
+              }
+            };
+
+            const rawResults = await pMap(pendingItems, processItem, DOWNLOAD_CONCURRENCY);
+            const contentItems = rawResults.filter((r): r is NonNullable<ContentResult> => r !== null);
+
+            const output = {
+              course_id,
+              modules_scanned: modules.length,
+              items_extracted: contentItems.length,
+              max_items: effectiveMax,
+              filter_content_type: filterType,
+              before_date: beforeDateStr ?? null,
+              after_date: afterDateStr ?? null,
+              items: contentItems
+            };
+
+            return {
+              content: [{ type: "text", text: this.serializeToolOutput(output, includeRaw) }]
             };
           }
 
@@ -1675,7 +2089,7 @@ export class CanvasMCPServer {
             const { course_id } = args as { course_id: number };
             if (!course_id) throw new Error("Missing required field: course_id");
 
-            const announcements = await this.client.listAnnouncements(String(course_id));
+            const announcements = await this.client.listAnnouncements(course_id);
             return {
               content: [{ type: "text", text: this.serializeToolOutput(announcements, includeRaw) }]
             };
@@ -1686,7 +2100,7 @@ export class CanvasMCPServer {
             const { course_id } = args as { course_id: number };
             if (!course_id) throw new Error("Missing required field: course_id");
 
-            const quizzes = await this.client.listQuizzes(String(course_id));
+            const quizzes = await this.client.listQuizzes(course_id);
             return {
               content: [{ type: "text", text: this.serializeToolOutput(quizzes, includeRaw) }]
             };
@@ -1698,7 +2112,7 @@ export class CanvasMCPServer {
               throw new Error("Missing required fields: course_id and quiz_id");
             }
 
-            const quiz = await this.client.getQuiz(String(course_id), quiz_id);
+            const quiz = await this.client.getQuiz(course_id, quiz_id);
             return {
               content: [{ type: "text", text: this.serializeToolOutput(quiz, includeRaw) }]
             };
@@ -1874,6 +2288,214 @@ export class CanvasMCPServer {
             const report = await this.client.createAccountReport(createReportArgs);
             return {
               content: [{ type: "text", text: this.serializeToolOutput(report, includeRaw) }]
+            };
+          }
+
+          // Search
+          case "canvas_search_course_content": {
+            const { course_id, search_term, content_types } = args as {
+              course_id: number;
+              search_term: string;
+              content_types?: string[];
+            };
+            if (!course_id || !search_term) {
+              throw new Error("Missing required fields: course_id and search_term");
+            }
+
+            const types = content_types ?? ["files", "pages", "assignments", "discussions"];
+            const searchResults: Record<string, unknown> = {};
+
+            const searches: Promise<void>[] = [];
+            if (types.includes("files")) {
+              searches.push(
+                this.client.searchFiles(course_id, search_term)
+                  .then(files => { searchResults.files = files; })
+                  .catch(e => { searchResults.files_error = e instanceof Error ? e.message : String(e); })
+              );
+            }
+            if (types.includes("pages")) {
+              searches.push(
+                this.client.searchPages(course_id, search_term)
+                  .then(pages => { searchResults.pages = pages; })
+                  .catch(e => { searchResults.pages_error = e instanceof Error ? e.message : String(e); })
+              );
+            }
+            if (types.includes("assignments")) {
+              searches.push(
+                this.client.listAssignments(course_id)
+                  .then(assignments => {
+                    const term = search_term.toLowerCase();
+                    searchResults.assignments = assignments.filter(a =>
+                      a.name.toLowerCase().includes(term) ||
+                      (a.description && a.description.toLowerCase().includes(term))
+                    );
+                  })
+                  .catch(e => { searchResults.assignments_error = e instanceof Error ? e.message : String(e); })
+              );
+            }
+            if (types.includes("discussions")) {
+              searches.push(
+                this.client.listDiscussionTopics(course_id)
+                  .then(topics => {
+                    const term = search_term.toLowerCase();
+                    searchResults.discussions = topics.filter(t =>
+                      t.title.toLowerCase().includes(term) ||
+                      (t.message && t.message.toLowerCase().includes(term))
+                    );
+                  })
+                  .catch(e => { searchResults.discussions_error = e instanceof Error ? e.message : String(e); })
+              );
+            }
+
+            await Promise.all(searches);
+
+            return {
+              content: [{ type: "text", text: this.serializeToolOutput({ course_id, search_term, ...searchResults }, includeRaw) }]
+            };
+          }
+
+          // Course timeline
+          case "canvas_get_course_timeline": {
+            const { course_id } = args as { course_id: number };
+            if (!course_id) throw new Error("Missing required field: course_id");
+
+            const [timelineModules, timelineAssignments, timelineCourse] = await Promise.all([
+              this.client.listModules(course_id),
+              this.client.listAssignments(course_id),
+              this.client.getCourse(course_id)
+            ]);
+
+            const assignmentMap = new Map(
+              timelineAssignments.map(a => [a.id as number, a])
+            );
+
+            const timeline = timelineModules.map(mod => {
+              const items = (mod.items ?? []).map(item => {
+                const entry: Record<string, unknown> = {
+                  title: item.title,
+                  type: item.type,
+                  position: item.position,
+                  content_id: item.content_id
+                };
+                if (item.content_details) {
+                  if (item.content_details.due_at) entry.due_at = item.content_details.due_at;
+                  if (item.content_details.unlock_at) entry.unlock_at = item.content_details.unlock_at;
+                  if (item.content_details.lock_at) entry.lock_at = item.content_details.lock_at;
+                }
+                if (item.type === 'Assignment' && item.content_id) {
+                  const asgn = assignmentMap.get(item.content_id);
+                  if (asgn) {
+                    entry.points_possible = asgn.points_possible;
+                    entry.submission_types = asgn.submission_types;
+                    if (asgn.due_at) entry.due_at = asgn.due_at;
+                  }
+                }
+                return entry;
+              });
+
+              return {
+                module_id: mod.id,
+                module_name: mod.name,
+                position: mod.position,
+                state: mod.state,
+                items_count: items.length,
+                items
+              };
+            });
+
+            return {
+              content: [{ type: "text", text: this.serializeToolOutput({
+                course_id,
+                course_name: timelineCourse.name,
+                course_start: timelineCourse.start_at,
+                course_end: timelineCourse.end_at,
+                term: timelineCourse.term,
+                modules_count: timelineModules.length,
+                total_items: timeline.reduce((sum, m) => sum + m.items_count, 0),
+                timeline
+              }, includeRaw) }]
+            };
+          }
+
+          // Assignment content extraction
+          case "canvas_get_assignment_content": {
+            const { course_id, assignment_id } = args as { course_id: number; assignment_id: number };
+            if (!course_id || !assignment_id) {
+              throw new Error("Missing required fields: course_id and assignment_id");
+            }
+
+            const asgn = await this.client.getAssignment(course_id, assignment_id);
+            const cleanDescription = asgn.description ? stripHtml(asgn.description) : '';
+
+            return {
+              content: [{ type: "text", text: this.serializeToolOutput({
+                assignment_id: asgn.id,
+                name: asgn.name,
+                due_at: asgn.due_at,
+                lock_at: asgn.lock_at,
+                unlock_at: asgn.unlock_at,
+                points_possible: asgn.points_possible,
+                submission_types: asgn.submission_types,
+                grading_type: asgn.grading_type,
+                description_text: cleanDescription,
+                description_length: cleanDescription.length
+              }, includeRaw) }]
+            };
+          }
+
+          // Submission feedback
+          case "canvas_get_submission_feedback": {
+            const { course_id, assignment_id, user_id } = args as {
+              course_id: number;
+              assignment_id: number;
+              user_id?: number;
+            };
+            if (!course_id || !assignment_id) {
+              throw new Error("Missing required fields: course_id and assignment_id");
+            }
+
+            const sub = await this.client.getSubmission(course_id, assignment_id, user_id || 'self');
+            const feedback: Record<string, unknown> = {
+              assignment_id,
+              submission_id: sub.id,
+              workflow_state: sub.workflow_state,
+              submitted_at: sub.submitted_at,
+              score: sub.score,
+              grade: sub.grade,
+              late: sub.late,
+              missing: sub.missing,
+              attempt: sub.attempt
+            };
+
+            if (sub.submission_comments && sub.submission_comments.length > 0) {
+              feedback.comments = sub.submission_comments.map(c => ({
+                author: c.author_name,
+                comment: c.comment,
+                created_at: c.created_at
+              }));
+            }
+            if (sub.rubric_assessment) {
+              feedback.rubric_assessment = sub.rubric_assessment;
+            }
+
+            return {
+              content: [{ type: "text", text: this.serializeToolOutput(feedback, includeRaw) }]
+            };
+          }
+
+          // Todo items
+          case "canvas_get_todo_items": {
+            const todoItems = await this.client.getTodoItems();
+            return {
+              content: [{ type: "text", text: this.serializeToolOutput(todoItems, includeRaw) }]
+            };
+          }
+
+          // Unread counts
+          case "canvas_get_unread_counts": {
+            const activitySummary = await this.client.getActivityStreamSummary();
+            return {
+              content: [{ type: "text", text: this.serializeToolOutput(activitySummary, includeRaw) }]
             };
           }
           
@@ -2073,7 +2695,19 @@ export class CanvasMCPServer {
   }
 }
 
-export function loadEnvironmentVariables(): void {
+export async function loadEnvironmentVariables(): Promise<void> {
+  if (process.env.CANVAS_API_TOKEN && process.env.CANVAS_DOMAIN) {
+    return;
+  }
+
+  let dotenv;
+  try {
+    dotenv = await import("dotenv");
+  } catch {
+    console.error("Warning: dotenv not available, relying on environment variables");
+    return;
+  }
+
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
   const envPaths = [
@@ -2115,6 +2749,8 @@ export function loadConfigFromEnvironment(env = process.env): MCPServerConfig {
     .map((origin) => origin.trim())
     .filter(Boolean);
 
+  const role = (env.CANVAS_ROLE || "all") as MCPServerConfig["role"];
+
   return {
     name: "canvas-mcp-server",
     version: "2.3.0",
@@ -2125,6 +2761,7 @@ export function loadConfigFromEnvironment(env = process.env): MCPServerConfig {
       retryDelay: parseInt(env.CANVAS_RETRY_DELAY || "1000", 10),
       timeout: parseInt(env.CANVAS_TIMEOUT || "30000", 10)
     },
+    role,
     logging: {
       level: (env.LOG_LEVEL as "debug" | "info" | "warn" | "error") || "info"
     },
@@ -2143,7 +2780,7 @@ export function loadConfigFromEnvironment(env = process.env): MCPServerConfig {
 }
 
 export async function main(): Promise<void> {
-  loadEnvironmentVariables();
+  await loadEnvironmentVariables();
 
   let server: CanvasMCPServer | undefined;
   try {
