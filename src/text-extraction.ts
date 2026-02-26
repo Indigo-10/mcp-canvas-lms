@@ -9,9 +9,9 @@ export type SupportedContentType = 'pdf' | 'docx' | 'pptx' | 'html' | 'text' | '
 
 const MAX_EXTRACT_BYTES = 50 * 1024 * 1024; // 50 MB hard ceiling for extraction
 
-export function detectContentType(contentType: string, filename: string): SupportedContentType {
-  const ct = contentType.toLowerCase();
-  const ext = filename.toLowerCase().split('.').pop() ?? '';
+export function detectContentType(contentType: string | undefined, filename: string | undefined): SupportedContentType {
+  const ct = (contentType ?? '').toLowerCase();
+  const ext = (filename ?? '').toLowerCase().split('.').pop() ?? '';
 
   if (ct.includes('pdf') || ext === 'pdf') return 'pdf';
   if (ct.includes('wordprocessingml') || ct.includes('msword') || ext === 'docx' || ext === 'doc') return 'docx';

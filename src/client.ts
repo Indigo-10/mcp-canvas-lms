@@ -414,7 +414,12 @@ export class CanvasClient {
 
   async getFile(fileId: number): Promise<CanvasFile> {
     const response = await this.client.get(`/files/${fileId}`);
-    return response.data;
+    const data = response.data;
+    // Canvas API returns "content-type" (hyphenated) but our interface uses content_type
+    if (!data.content_type && data['content-type']) {
+      data.content_type = data['content-type'];
+    }
+    return data;
   }
 
   async downloadFileContent(fileId: number): Promise<{ buffer: Buffer; file: CanvasFile }> {
